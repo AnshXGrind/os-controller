@@ -1,7 +1,7 @@
 """
 vision/hand_tracker.py
 
-MediaPipe-based hand gesture recogniser.
+MediaPipe-based hand gesture recogniser (Tasks API – mediapipe ≥ 0.10.30).
 
 Detects 21 hand landmarks and classifies the hand shape into one of
 the following gesture constants:
@@ -14,10 +14,14 @@ the following gesture constants:
     G_UNKNOWN   – anything else
 """
 
+import time
+from pathlib import Path
+
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mpv
 import numpy as np
-from typing import Optional
 
 from ai_os_controller.utils.gesture_utils import get_finger_states
 from ai_os_controller.utils.smoothing import LandmarkSmoother, GestureConfirmer
@@ -30,10 +34,24 @@ G_FIST      = "fist"
 G_OPEN      = "open"
 G_UNKNOWN   = "unknown"
 
+# ── model path ───────────────────────────────────────────────────────────────
+_MODELS_DIR = Path(__file__).parent.parent / "models"
+_HAND_MODEL = _MODELS_DIR / "hand_landmarker.task"
+
+# ── hand skeleton connections for drawing ────────────────────────────────────
+_HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),          # thumb
+    (0,5),(5,6),(6,7),(7,8),          # index
+    (5,9),(9,10),(10,11),(11,12),      # middle
+    (9,13),(13,14),(14,15),(15,16),    # ring
+    (13,17),(17,18),(18,19),(19,20),   # pinky
+    (0,17),                            # palm base
+]
+
 
 class HandTracker:
     """
-    Wraps MediaPipe Hands and classifies hand gestures each frame.
+    Wraps MediaPipe HandLandmarker (Tasks API) and classifies hand gestures.
 
     Args:
         max_hands:          Maximum number of hands to detect.
@@ -52,19 +70,21 @@ class HandTracker:
         confirm_frames: int = 4,
         smooth_alpha: float = 0.5,
     ):
-        self._mp_hands = mp.solutions.hands
-        self._mp_draw  = mp.solutions.drawing_utils
-        self._mp_draw_styles = mp.solutions.drawing_styles
-
-        self.hands = self._mp_hands.Hands(
-            max_num_hands=max_hands,
-            min_detection_confidence=min_detection_conf,
+        base_options = mp_python.BaseOptions(model_asset_path=str(_HAND_MODEL))
+        options = mpv.HandLandmarkerOptions(
+            base_options=base_options,
+            running_mode=mpv.RunningMode.VIDEO,
+            num_hands=max_hands,
+            min_hand_detection_confidence=min_detection_conf,
+            min_hand_presence_confidence=min_detection_conf,
             min_tracking_confidence=min_tracking_conf,
         )
+        self._landmarker = mpv.HandLandmarker.create_from_options(options)
+        self._start_ms   = int(time.time() * 1000)
 
         # Smoother for 21 landmarks (x, y, z) each
-        self._smoother   = LandmarkSmoother(num_landmarks=21, alpha=smooth_alpha)
-        self._confirmer  = GestureConfirmer(required_frames=confirm_frames)
+        self._smoother  = LandmarkSmoother(num_landmarks=21, alpha=smooth_alpha)
+        self._confirmer = GestureConfirmer(required_frames=confirm_frames)
 
         # Last stable gesture (persists until a new one is confirmed)
         self.current_gesture: str = G_UNKNOWN
@@ -83,28 +103,30 @@ class HandTracker:
             One of the G_* gesture constants.
         """
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb.flags.writeable = False
-        results = self.hands.process(rgb)
-        rgb.flags.writeable = True
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = int(time.time() * 1000) - self._start_ms
+        results = self._landmarker.detect_for_video(mp_image, timestamp_ms)
 
-        if not results.multi_hand_landmarks:
+        if not results.hand_landmarks:
             self._smoother.reset()
             raw_gesture = G_UNKNOWN
         else:
-            hand_lm = results.multi_hand_landmarks[0]
+            lm_list_raw = results.hand_landmarks[0]
 
             # ── draw skeleton ─────────────────────────────────────────
-            self._mp_draw.draw_landmarks(
-                frame,
-                hand_lm,
-                self._mp_hands.HAND_CONNECTIONS,
-                self._mp_draw_styles.get_default_hand_landmarks_style(),
-                self._mp_draw_styles.get_default_hand_connections_style(),
-            )
+            h, w = frame.shape[:2]
+            for a, b in _HAND_CONNECTIONS:
+                p1 = lm_list_raw[a]
+                p2 = lm_list_raw[b]
+                cv2.line(frame,
+                         (int(p1.x * w), int(p1.y * h)),
+                         (int(p2.x * w), int(p2.y * h)),
+                         (0, 255, 0), 2)
+            for lm in lm_list_raw:
+                cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 4, (255, 0, 0), -1)
 
             # ── smooth landmarks ──────────────────────────────────────
-            raw_pts = np.array([[lm.x, lm.y, lm.z]
-                                 for lm in hand_lm.landmark])
+            raw_pts  = np.array([[lm.x, lm.y, lm.z] for lm in lm_list_raw])
             smoothed = self._smoother.smooth(raw_pts)
 
             # Rebuild a lightweight list of objects with .x/.y/.z
@@ -121,7 +143,7 @@ class HandTracker:
 
     def close(self):
         """Release MediaPipe resources."""
-        self.hands.close()
+        self._landmarker.close()
 
     # ------------------------------------------------------------------
     # Internal
