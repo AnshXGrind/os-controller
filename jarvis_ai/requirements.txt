@@ -1,0 +1,35 @@
+# ── Core speech-recognition stack ────────────────────────────────────────────
+SpeechRecognition>=3.10.0
+pyaudio>=0.2.13
+
+# ── OS control ────────────────────────────────────────────────────────────────
+pyautogui>=0.9.54
+keyboard>=0.13.5
+pygetwindow>=0.0.9
+
+# ── System information ────────────────────────────────────────────────────────
+psutil>=5.9.0
+
+# ── Text-to-speech (offline) ──────────────────────────────────────────────────
+pyttsx3>=2.90
+
+# ── Maths ─────────────────────────────────────────────────────────────────────
+numpy>=1.24.0
+
+# ── Optional: offline STT back-ends ──────────────────────────────────────────
+# Vosk (fast, small models available):
+#   pip install vosk
+#   Download model from https://alphacephei.com/vosk/models
+#
+# Whisper (OpenAI, higher accuracy, GPU-friendly):
+#   pip install openai-whisper
+#
+# Uncomment as needed:
+# vosk>=0.3.45
+# openai-whisper>=20231117
+
+# ── Optional: LLM-based intent parsing ───────────────────────────────────────
+# openai>=1.0.0
+
+# ── Optional: Windows brightness control ─────────────────────────────────────
+# wmi>=1.5.1
