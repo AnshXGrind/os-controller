@@ -108,7 +108,7 @@ class IntentParser:
     def _keyword_parse(self, text: str) -> tuple[str, str]:
         """Scan *text* for known keyword phrases and extract a value."""
 
-        # ── App open/close – check before generic keywords
+        # ── App open/close – highest priority
         #    "open chrome", "launch vscode", "close spotify" …
         for action, triggers in [
             ("open_app",  self._kw["open_app"]),
@@ -119,12 +119,6 @@ class IntentParser:
                     app = self._extract_app(text, kw)
                     if app:
                         return action, app
-
-        # ── Folder open
-        for trigger in self._kw.get("open_folder", []):
-            if trigger in text:
-                folder = self._extract_folder(text)
-                return "open_folder", folder or "documents"
 
         # ── Search / query  (extract the search term)
         for trigger in self._kw.get("search_google", []):
@@ -138,7 +132,7 @@ class IntentParser:
                 query = self._extract_after(text, trigger)
                 return "search_file", query
 
-        # ── All remaining single-keyword intents
+        # ── All remaining single-keyword intents (before folder check)
         for intent, keywords in self._kw.items():
             if intent in ("open_app", "close_app", "open_folder",
                           "search_google", "search_file"):
@@ -146,6 +140,26 @@ class IntentParser:
             for kw in keywords:
                 if kw in text:
                     return intent, ""
+
+        # ── Folder open – lowest priority so "open music" → Spotify not ~/Music
+        #    Only fire when the user explicitly says "folder"/"directory"/"go to",
+        #    OR when the target word is not a known app alias.
+        _FOLDER_EXPLICIT = ("folder", "directory", "go to")
+        for trigger in self._kw.get("open_folder", []):
+            if trigger in text:
+                folder = self._extract_folder(text)
+                if folder:
+                    explicit = any(w in text for w in _FOLDER_EXPLICIT)
+                    is_app   = folder in _KNOWN_APPS
+                    if explicit or not is_app:
+                        return "open_folder", folder
+                    # Ambiguous: prefer app if it exists
+                    logger.debug(
+                        f"IntentParser: '{folder}' is a known app alias – "
+                        "preferring open_app over open_folder."
+                    )
+                    return "open_app", folder
+                return "open_folder", "documents"
 
         return "unknown", ""
 

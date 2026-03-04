@@ -15,6 +15,7 @@ Supports:
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -56,31 +57,35 @@ class AppControl:
             logger.warning(f"AppControl.open_app: unknown app '{name}'")
             return False
 
-        path = self._paths.get(key, "")
-
-        if not path:
-            logger.warning(f"AppControl: no path registered for '{key}'")
-            return False
-
+        path = self._paths.get(key, "") or key
         logger.info(f"AppControl: opening '{key}' → {path}")
+
+        # Primary: shell=True works for system apps (notepad, calc, etc.)
+        # without needing a full path, and works on all Windows accounts.
         try:
-            if Path(path).is_absolute() and not Path(path).exists():
-                # Try launching as a simple command (system PATH)
-                subprocess.Popen(key, shell=True)
-            else:
-                os.startfile(path)
+            subprocess.Popen(path, shell=True)
             return True
-        except FileNotFoundError:
-            # Fallback: try as shell command
-            try:
-                subprocess.Popen(path, shell=True)
-                return True
-            except Exception as exc:
-                logger.error(f"AppControl.open_app failed for '{key}': {exc}")
-                return False
         except Exception as exc:
-            logger.error(f"AppControl.open_app failed for '{key}': {exc}")
-            return False
+            logger.warning(f"AppControl: shell launch failed for '{path}': {exc}")
+
+        # Fallback: os.startfile (Windows-only, requires a valid file path)
+        if sys.platform == "win32":
+            try:
+                os.startfile(path)
+                return True
+            except FileNotFoundError:
+                logger.error(
+                    f"AppControl.open_app: '{path}' not found. "
+                    f"Check APP_PATHS entry for '{key}'."
+                )
+            except OSError as exc:
+                logger.error(f"AppControl.open_app os.startfile failed for '{key}': {exc}")
+        else:
+            logger.error(
+                f"AppControl.open_app: os.startfile not available on '{sys.platform}'. "
+                f"Add a native path for '{key}' in APP_PATHS."
+            )
+        return False
 
     def close_app(self, name: str) -> bool:
         """

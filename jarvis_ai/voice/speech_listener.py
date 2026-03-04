@@ -85,34 +85,54 @@ class SpeechListener:
         """
         Block-listen for a single utterance and return the recognised text.
 
-        Returns None on silence, unrecognised speech, or any error.
+        Returns None on silence/unrecognised speech.
+        Returns "__MIC_ERROR__" after 5 consecutive OSError retries so the
+        caller can alert the user and stop polling.
         """
         if not self._available:
             logger.error("SpeechListener unavailable – check installation.")
             return None
 
-        sr = self._sr_lib
-        try:
-            mic = sr.Microphone()
-        except Exception as exc:
-            logger.error(f"Cannot open microphone: {exc}")
-            return None
+        sr   = self._sr_lib
+        max_retries = 5
 
-        try:
-            with mic as source:
-                logger.debug("Listening …")
-                audio = self._recognizer.listen(
-                    source,
-                    timeout=self.listen_timeout,
-                    phrase_time_limit=self.phrase_timeout,
+        for attempt in range(max_retries):
+            # Re-initialise the Microphone object on every retry so a
+            # device reset / unplug is picked up automatically.
+            try:
+                mic = sr.Microphone()
+            except Exception as exc:
+                logger.warning(
+                    f"Cannot open microphone (attempt {attempt + 1}/{max_retries}): {exc}"
                 )
-        except sr.WaitTimeoutError:
-            return None
-        except Exception as exc:
-            logger.warning(f"listen error: {exc}")
-            return None
+                time.sleep(3)
+                continue
 
-        return self._recognise(audio)
+            try:
+                with mic as source:
+                    logger.debug("Listening …")
+                    audio = self._recognizer.listen(
+                        source,
+                        timeout=self.listen_timeout,
+                        phrase_time_limit=self.phrase_timeout,
+                    )
+                # Successful listen – reset retry counter implicitly by returning
+                return self._recognise(audio)
+
+            except sr.WaitTimeoutError:
+                return None
+            except OSError as exc:
+                logger.warning(
+                    f"Microphone OSError (attempt {attempt + 1}/{max_retries}): {exc}. "
+                    f"Retrying in 3 s …"
+                )
+                time.sleep(3)
+            except Exception as exc:
+                logger.warning(f"listen error: {exc}")
+                return None
+
+        logger.error("Microphone failed after 5 retries – giving up.")
+        return "__MIC_ERROR__"
 
     def calibrate(self, duration: float = 1.0):
         """

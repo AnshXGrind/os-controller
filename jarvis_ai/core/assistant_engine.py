@@ -96,6 +96,10 @@ class AssistantEngine:
         raw = self.listener.listen_once()
         if not raw:
             return True    # silence – keep running
+        if raw == "__MIC_ERROR__":
+            self.tts.speak("Microphone disconnected. Please check your device.")
+            logger.error("AssistantEngine: microphone unavailable after retries.")
+            return True
 
         logger.info(f"Heard: '{raw}'")
 

@@ -114,15 +114,39 @@ class SystemControl:
         logger.info("SystemControl: lock_screen")
         os.system("rundll32.exe user32.dll,LockWorkStation")
 
-    def sleep(self):
-        """Put the system to sleep (requires powershell)."""
+    def sleep(self) -> str:
+        """Put the system to sleep.
+
+        Tries ctypes powrprof first (instant, no shell), then falls back to
+        rundll32 which works on standard Windows 10/11 accounts without admin.
+        """
         logger.info("SystemControl: sleep")
-        subprocess.run(
-            ["powershell", "-command",
-             "Add-Type -Assembly System.Windows.Forms; "
-             "[System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"],
-            check=False,
-        )
+
+        # Primary: ctypes – works on most systems, fails with Access Denied on
+        # some Windows 11 standard accounts.
+        try:
+            import ctypes
+            ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            return "Going to sleep."
+        except OSError as exc:
+            logger.warning(
+                f"SystemControl: ctypes sleep failed ({exc}) – trying rundll32 fallback."
+            )
+        except AttributeError:
+            logger.warning(
+                "SystemControl: ctypes.windll not available – trying rundll32 fallback."
+            )
+
+        # Fallback: rundll32 – no admin required on Windows 10/11.
+        try:
+            subprocess.run(
+                ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+                check=False,
+            )
+            return "Going to sleep via rundll32."
+        except Exception as exc:
+            logger.error(f"SystemControl: sleep fallback failed: {exc}")
+            return f"Sleep failed: {exc}"
 
     # ------------------------------------------------------------------
     # Screenshot

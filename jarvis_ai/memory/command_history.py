@@ -13,6 +13,7 @@ Supports:
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -58,6 +59,7 @@ class CommandHistory:
         self.max_entries  = max_entries
         self._file        = Path(persist_file) if persist_file else None
         self._history:    list[HistoryEntry] = []
+        self._lock        = threading.Lock()
 
         if self._file:
             self._load()
@@ -136,18 +138,20 @@ class CommandHistory:
     # ------------------------------------------------------------------
 
     def _save(self):
-        try:
-            data = [asdict(e) for e in self._history]
-            self._file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception as exc:
-            logger.warning(f"CommandHistory: could not save to '{self._file}': {exc}")
+        with self._lock:
+            try:
+                data = [asdict(e) for e in self._history]
+                self._file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            except Exception as exc:
+                logger.warning(f"CommandHistory: could not save to '{self._file}': {exc}")
 
     def _load(self):
-        if not self._file.exists():
-            return
-        try:
-            raw = json.loads(self._file.read_text(encoding="utf-8"))
-            self._history = [HistoryEntry(**r) for r in raw]
-            logger.info(f"CommandHistory: loaded {len(self._history)} entries from '{self._file}'.")
-        except Exception as exc:
-            logger.warning(f"CommandHistory: could not load '{self._file}': {exc}")
+        with self._lock:
+            if not self._file.exists():
+                return
+            try:
+                raw = json.loads(self._file.read_text(encoding="utf-8"))
+                self._history = [HistoryEntry(**r) for r in raw]
+                logger.info(f"CommandHistory: loaded {len(self._history)} entries from '{self._file}'.")
+            except Exception as exc:
+                logger.warning(f"CommandHistory: could not load '{self._file}': {exc}")
